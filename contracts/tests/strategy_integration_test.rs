@@ -1,12 +1,13 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    contract, contractimpl, testutils::Address as _, testutils::Ledger, Address, BytesN, Env, Symbol,
+    contract, contractimpl, testutils::Address as _, testutils::Ledger, Address, BytesN, Env,
+    Symbol,
 };
 
-use Nestera::{NesteraContract, NesteraContractClient};
 use Nestera::strategy::interface::YieldStrategy;
 use Nestera::PlanType;
+use Nestera::{NesteraContract, NesteraContractClient};
 
 // --- Mock Yield Strategy ---
 
@@ -183,7 +184,7 @@ fn test_emergency_withdraw_scenario() {
     client.register_strategy(&admin, &strategy_id, &1u32);
     client.initialize_user(&user1);
     client.deposit_flexi(&user1, &10_000);
-    
+
     let lock_id = client.create_lock_save(&user1, &10_000, &30);
     client.route_lock_to_strategy(&user1, &lock_id, &strategy_id, &10_000);
 
