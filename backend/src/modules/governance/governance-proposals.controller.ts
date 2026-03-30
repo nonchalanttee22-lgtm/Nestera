@@ -10,11 +10,23 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { CreateProposalDto } from './dto/create-proposal.dto';
+import { EditProposalDto } from './dto/edit-proposal.dto';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CastVoteDto } from './dto/cast-vote.dto';
 import { ProposalListItemDto } from './dto/proposal-list-item.dto';
+import { ProposalResponseDto } from './dto/proposal-response.dto';
 import { ProposalVotesResponseDto } from './dto/proposal-votes-response.dto';
 import { ProposalStatus } from './entities/governance-proposal.entity';
 import { GovernanceService } from './governance.service';
@@ -23,6 +35,47 @@ import { GovernanceService } from './governance.service';
 @Controller('governance/proposals')
 export class GovernanceProposalsController {
   constructor(private readonly governanceService: GovernanceService) {}
+
+  @Post('create')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Create a governance proposal',
+    description:
+      'Creates a structured governance proposal with validation, voting-power threshold checks, supporting attachments, and quorum calculation.',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Governance proposal created successfully',
+    type: ProposalResponseDto,
+  })
+  createProposal(
+    @CurrentUser() user: { id: string },
+    @Body() dto: CreateProposalDto,
+  ): Promise<ProposalResponseDto> {
+    return this.governanceService.createProposal(user.id, dto);
+  }
+
+  @Post(':id/edit')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Edit a governance proposal before voting starts',
+    description:
+      'Allows the proposal creator to update structured proposal details before the voting window opens.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Governance proposal updated successfully',
+    type: ProposalResponseDto,
+  })
+  editProposal(
+    @CurrentUser() user: { id: string },
+    @Param('id') id: string,
+    @Body() dto: EditProposalDto,
+  ): Promise<ProposalResponseDto> {
+    return this.governanceService.editProposal(user.id, id, dto);
+  }
 
   @Get()
   @ApiOperation({

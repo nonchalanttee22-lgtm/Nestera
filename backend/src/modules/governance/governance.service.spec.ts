@@ -1,9 +1,19 @@
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { GovernanceService } from './governance.service';
 import { UserService } from '../user/user.service';
 import { StellarService } from '../blockchain/stellar.service';
 import { SavingsService } from '../blockchain/savings.service';
+import {
+  GovernanceProposal,
+  ProposalAttachmentType,
+  ProposalCategory,
+  ProposalStatus,
+  ProposalType,
+} from './entities/governance-proposal.entity';
+import { Vote, VoteDirection } from './entities/vote.entity';
 import { TransactionsService } from '../transactions/transactions.service';
 import { GovernanceProposal } from './entities/governance-proposal.entity';
 import { Vote } from './entities/vote.entity';
@@ -13,8 +23,24 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 describe('GovernanceService', () => {
   let service: GovernanceService;
   let userService: { findById: jest.Mock };
-  let stellarService: { getDelegationForUser: jest.Mock };
+  let stellarService: {
+    getDelegationForUser: jest.Mock;
+    getRpcServer: jest.Mock;
+  };
   let savingsService: { getUserVaultBalance: jest.Mock };
+  let eventEmitter: { emit: jest.Mock };
+  let proposalRepo: {
+    find: jest.Mock;
+    findOne: jest.Mock;
+    findOneBy: jest.Mock;
+    create: jest.Mock;
+    save: jest.Mock;
+  };
+  let voteRepo: {
+    count: jest.Mock;
+    createQueryBuilder: jest.Mock;
+    findAndCount: jest.Mock;
+  };
   let transactionsService: any;
   let eventEmitter: { emit: jest.Mock };
   let proposalRepo: { findOneBy: jest.Mock };
@@ -23,8 +49,26 @@ describe('GovernanceService', () => {
 
   beforeEach(async () => {
     userService = { findById: jest.fn() };
-    stellarService = { getDelegationForUser: jest.fn() };
+    stellarService = {
+      getDelegationForUser: jest.fn(),
+      getRpcServer: jest.fn().mockReturnValue({
+        getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1000 }),
+      }),
+    };
     savingsService = { getUserVaultBalance: jest.fn() };
+    eventEmitter = { emit: jest.fn() };
+    proposalRepo = {
+      find: jest.fn(),
+      findOne: jest.fn(),
+      findOneBy: jest.fn(),
+      create: jest.fn(),
+      save: jest.fn(),
+    };
+    voteRepo = {
+      count: jest.fn(),
+      createQueryBuilder: jest.fn(),
+      findAndCount: jest.fn(),
+    };
     transactionsService = {};
     eventEmitter = { emit: jest.fn() };
     proposalRepo = { findOneBy: jest.fn() };
@@ -51,7 +95,9 @@ describe('GovernanceService', () => {
     service = module.get<GovernanceService>(GovernanceService);
   });
 
-  // --- getUserDelegation (existing tests, unchanged) ---
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
 
   it('returns null when the user has no linked wallet', async () => {
     userService.findById.mockResolvedValue({ id: 'user-1', publicKey: null });
@@ -65,7 +111,7 @@ describe('GovernanceService', () => {
   it('returns null when no delegation exists on-chain', async () => {
     userService.findById.mockResolvedValue({
       id: 'user-1',
-      publicKey: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      publicKey: 'GUSERPUBLICKEY123',
     });
     stellarService.getDelegationForUser.mockResolvedValue(null);
 
@@ -77,18 +123,14 @@ describe('GovernanceService', () => {
   it('returns the delegated wallet address when present', async () => {
     userService.findById.mockResolvedValue({
       id: 'user-1',
-      publicKey: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      publicKey: 'GUSERPUBLICKEY123',
     });
-    stellarService.getDelegationForUser.mockResolvedValue(
-      'GB7TAYQB6A6E7MCCKRUYJ4JYK2YTHJOTD4A5Q65XAH2EJQ2F6J67P5ST',
-    );
+    stellarService.getDelegationForUser.mockResolvedValue('GDELEGATE123');
 
     await expect(service.getUserDelegation('user-1')).resolves.toEqual({
-      delegate: 'GB7TAYQB6A6E7MCCKRUYJ4JYK2YTHJOTD4A5Q65XAH2EJQ2F6J67P5ST',
+      delegate: 'GDELEGATE123',
     });
   });
-
-  // --- getUserVotingPower (new tests) ---
 
   describe('getUserVotingPower', () => {
     const OLD_ENV = process.env;
@@ -112,9 +154,11 @@ describe('GovernanceService', () => {
     it('returns formatted voting power when user has publicKey', async () => {
       userService.findById.mockResolvedValue({
         id: 'user-1',
-        publicKey: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+        publicKey: 'GUSERPUBLICKEY123',
       });
 
+      await expect(service.getUserVotingPower('user-1')).resolves.toEqual({
+        votingPower: '5,000 NST',
       const queryBuilder = {
         select: jest.fn().mockReturnThis(),
         where: jest.fn().mockReturnThis(),
@@ -132,7 +176,7 @@ describe('GovernanceService', () => {
       delete process.env.NST_GOVERNANCE_CONTRACT_ID;
       userService.findById.mockResolvedValue({
         id: 'user-1',
-        publicKey: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+        publicKey: 'GUSERPUBLICKEY123',
       });
 
       await expect(service.getUserVotingPower('user-1')).rejects.toThrow(
@@ -141,6 +185,236 @@ describe('GovernanceService', () => {
     });
   });
 
+  describe('createProposal', () => {
+    const OLD_ENV = process.env;
+
+    beforeEach(() => {
+      process.env = {
+        ...OLD_ENV,
+        NST_GOVERNANCE_CONTRACT_ID: 'CONTRACT123',
+        GOVERNANCE_PROPOSAL_THRESHOLD: '100',
+        GOVERNANCE_QUORUM_BPS: '5000',
+        GOVERNANCE_MAX_VOTING_POWER: '10000',
+        GOVERNANCE_START_DELAY_LEDGERS: '100',
+        GOVERNANCE_VOTING_PERIOD_LEDGERS: '500',
+      };
+    });
+
+    afterEach(() => {
+      process.env = OLD_ENV;
+    });
+
+    it('creates a structured governance proposal and emits an event', async () => {
+      userService.findById.mockResolvedValue({
+        id: 'user-1',
+        publicKey: 'GUSERPUBLICKEY123',
+      });
+      savingsService.getUserVaultBalance.mockResolvedValue(2_000_000_000);
+      proposalRepo.findOne.mockResolvedValue({ onChainId: 7 });
+      proposalRepo.create.mockImplementation((input) => ({
+        id: 'proposal-1',
+        createdAt: new Date('2026-03-30T12:00:00.000Z'),
+        updatedAt: new Date('2026-03-30T12:00:00.000Z'),
+        ...input,
+      }));
+      proposalRepo.save.mockImplementation(async (proposal) => proposal);
+
+      const result = await service.createProposal('user-1', {
+        description: 'Increase flexi rate',
+        type: ProposalType.RATE_CHANGE,
+        action: {
+          target: 'flexiRate',
+          newValue: 12,
+        },
+        attachments: [
+          {
+            name: 'Model',
+            url: 'https://example.com/model.pdf',
+            type: ProposalAttachmentType.DOCUMENT,
+          },
+        ],
+      });
+
+      expect(proposalRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          onChainId: 8,
+          proposer: 'GUSERPUBLICKEY123',
+          createdByUserId: 'user-1',
+          category: ProposalCategory.TECHNICAL,
+          type: ProposalType.RATE_CHANGE,
+          action: {
+            target: 'flexiRate',
+            newValue: 12,
+          },
+          attachments: [
+            {
+              name: 'Model',
+              url: 'https://example.com/model.pdf',
+              type: ProposalAttachmentType.DOCUMENT,
+            },
+          ],
+        }),
+      );
+      expect(eventEmitter.emit).toHaveBeenCalledWith(
+        'governance.proposal.created',
+        expect.objectContaining({
+          proposalId: 'proposal-1',
+          onChainId: 8,
+          proposer: 'GUSERPUBLICKEY123',
+          type: ProposalType.RATE_CHANGE,
+        }),
+      );
+      expect(result.requiredQuorum).toBe('5000.00000000');
+      expect(result.proposalThreshold).toBe('100.00000000');
+      expect(result.canEdit).toBe(true);
+    });
+
+    it('rejects proposal creation when user is below the voting-power threshold', async () => {
+      userService.findById.mockResolvedValue({
+        id: 'user-1',
+        publicKey: 'GUSERPUBLICKEY123',
+      });
+      savingsService.getUserVaultBalance.mockResolvedValue(500_000_000);
+
+      await expect(
+        service.createProposal('user-1', {
+          description: 'Pause the contract',
+          type: ProposalType.PAUSE,
+          action: { reason: 'Emergency maintenance' },
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('editProposal', () => {
+    const OLD_ENV = process.env;
+
+    beforeEach(() => {
+      process.env = {
+        ...OLD_ENV,
+        NST_GOVERNANCE_CONTRACT_ID: 'CONTRACT123',
+      };
+    });
+
+    afterEach(() => {
+      process.env = OLD_ENV;
+    });
+
+    it('allows the creator to edit a proposal before voting starts', async () => {
+      proposalRepo.findOneBy.mockResolvedValue({
+        id: 'proposal-1',
+        onChainId: 5,
+        title: 'Allocate treasury',
+        description: 'Old description',
+        category: ProposalCategory.TREASURY,
+        type: ProposalType.TREASURY_ALLOCATION,
+        action: {
+          recipient: 'GOLDRECIPIENT',
+          amount: 1000,
+          asset: 'NST',
+        },
+        attachments: [],
+        proposer: 'GUSERPUBLICKEY123',
+        createdByUserId: 'user-1',
+        startBlock: 1400,
+        endBlock: 1900,
+        status: ProposalStatus.ACTIVE,
+        requiredQuorum: '5000.00000000',
+        quorumBps: 5000,
+        proposalThreshold: '100.00000000',
+        createdAt: new Date('2026-03-29T12:00:00.000Z'),
+        updatedAt: new Date('2026-03-29T12:00:00.000Z'),
+      });
+      voteRepo.count.mockResolvedValue(0);
+      proposalRepo.save.mockImplementation(async (proposal) => ({
+        ...proposal,
+        updatedAt: new Date('2026-03-30T12:00:00.000Z'),
+      }));
+
+      const result = await service.editProposal('user-1', 'proposal-1', {
+        description: 'Allocate additional funds',
+        action: {
+          recipient: 'GNEWRECIPIENT',
+          amount: 2500,
+          asset: 'USDC',
+        },
+        attachments: [
+          {
+            name: 'Budget',
+            url: 'https://example.com/budget',
+            type: ProposalAttachmentType.LINK,
+          },
+        ],
+        startBlock: 1500,
+        endBlock: 2100,
+      });
+
+      expect(proposalRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: 'Allocate additional funds',
+          action: {
+            recipient: 'GNEWRECIPIENT',
+            amount: 2500,
+            asset: 'USDC',
+          },
+          attachments: [
+            {
+              name: 'Budget',
+              url: 'https://example.com/budget',
+              type: ProposalAttachmentType.LINK,
+            },
+          ],
+          startBlock: 1500,
+          endBlock: 2100,
+        }),
+      );
+      expect(result.canEdit).toBe(true);
+    });
+
+    it('rejects edits from non-creators', async () => {
+      proposalRepo.findOneBy.mockResolvedValue({
+        id: 'proposal-1',
+        createdByUserId: 'someone-else',
+      });
+
+      await expect(
+        service.editProposal('user-1', 'proposal-1', {
+          description: 'New description',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('getProposalVotesByOnChainId', () => {
+    it('returns recent votes and tallies', async () => {
+      proposalRepo.findOneBy.mockResolvedValue({
+        id: 'proposal-1',
+        onChainId: 3,
+      });
+      voteRepo.findAndCount.mockResolvedValue([
+        [
+          {
+            walletAddress: 'GWALLET1',
+            direction: VoteDirection.FOR,
+            weight: 30,
+            createdAt: new Date('2026-03-30T10:00:00.000Z'),
+          },
+          {
+            walletAddress: 'GWALLET2',
+            direction: VoteDirection.AGAINST,
+            weight: 20,
+            createdAt: new Date('2026-03-30T11:00:00.000Z'),
+          },
+        ],
+        2,
+      ]);
+
+      const result = await service.getProposalVotesByOnChainId(3, 0);
+
+      expect(result.tally.forVotes).toBe(1);
+      expect(result.tally.againstVotes).toBe(1);
+      expect(result.tally.totalWeight).toBe('50');
+      expect(result.recentVoters).toHaveLength(2);
   describe('castVote', () => {
     it('throws BadRequestException if user has no publicKey', async () => {
       userService.findById.mockResolvedValue({ id: 'user-1', publicKey: null });
