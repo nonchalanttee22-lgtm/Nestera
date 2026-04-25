@@ -19,6 +19,7 @@ import {
   Users,
   Briefcase,
   LifeBuoy,
+  UserCircle,
 } from "lucide-react";
 
 const navLinks = [
@@ -31,6 +32,7 @@ const navLinks = [
   { label: "Transactions", href: "/dashboard/transactions", icon: History },
   { label: "Referrals", href: "/dashboard/referrals", icon: Users },
   { label: "Notifications", href: "/dashboard/notifications", icon: Bell },
+  { label: "Profile", href: "/dashboard/profile", icon: UserCircle },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
   { label: "Support", href: "/support", icon: LifeBuoy },
 ];
