@@ -150,7 +150,7 @@ describe('IndexerService', () => {
       const mockEvents = [
         {
           id: '1',
-          ledger: '101',
+          ledger: 101,
           topic: ['deposit'],
           value: '100',
           txHash: 'hash1',
@@ -160,10 +160,7 @@ describe('IndexerService', () => {
 
       await service.runIndexerCycle();
 
-      expect(stellarService.getEvents).toHaveBeenCalledWith(89, [
-        'CC1',
-        'CC2',
-      ]);
+      expect(stellarService.getEvents).toHaveBeenCalledWith(89, ['CC1', 'CC2']);
       expect(depositHandler.handle).toHaveBeenCalled();
       expect(indexerStateRepo.save).toHaveBeenCalled();
       expect(service.getIndexerState()?.lastProcessedLedger).toBe(101);
@@ -173,7 +170,7 @@ describe('IndexerService', () => {
       const mockEvents = [
         {
           id: '1',
-          ledger: '101',
+          ledger: 101,
           topic: ['deposit'],
           value: 'fail',
           txHash: 'hash1',
